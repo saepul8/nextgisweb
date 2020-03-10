@@ -1,0 +1,11 @@
+{
+    "name": "@nextgisweb/webpack",
+    "version": "0",
+    "type": "module",
+    "entry": [
+        "test-dijit",
+        "test-lodash",
+        "test-moment",
+        "test-mixed"
+    ]
+}
