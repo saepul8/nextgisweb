@@ -5,6 +5,7 @@ from ..component import Component
 from ..lib.config import Option
 
 from .util import COMP_ID
+from . import command  # NOQA
 
 
 class WebpackComponent(Component):

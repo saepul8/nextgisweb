@@ -59,8 +59,9 @@
             isDebug: true,
             packages: [
                 {name: "jed", main: "jed", location: ${ request.static_url('nextgisweb:static/jed/') | json.dumps, n }},
-                {name: "@nextgisweb", location: ${ request.route_url('webpack.dist', subpath='@nextgisweb') | json.dumps, n}},
-                {name: "wpchunk", location: ${ request.route_url('webpack.dist', subpath='wpchunk') | json.dumps, n}}
+                {name: "cload", location: ${ request.route_url('webpack.cload', subpath='') | json.dumps, n}},
+                {name: "cdata", location: ${ request.route_url('webpack.cdata', subpath='') | json.dumps, n}},
+                {name: "@nextgisweb", location: ${ request.route_url('webpack.dist', subpath='@nextgisweb') | json.dumps, n}}
             ],
             baseUrl: ${request.route_url('amd_package', subpath="dojo") | json.dumps, n},
             locale: ${request.locale_name | json.dumps, n}
