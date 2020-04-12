@@ -41,6 +41,10 @@ msgstr "Объект с id = %d не найден в ресурсе с id = %d."
 msgid "The feature may have been deleted or an error in the address."
 msgstr "Объект мог быть удалён, либо допущена ошибка в адресе."
 
+#: api.py:642
+msgid "Changes tracking is not enabled on this layer."
+msgstr "Отслеживание изменений отключено для данного слоя."
+
 #: model.py:155
 #, python-format
 msgid "Field not found (ID=%d)."

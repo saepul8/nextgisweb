@@ -19,70 +19,70 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.6.0\n"
 
-#: model.py:77
+#: model.py:78
 msgid "Point"
 msgstr "Точка"
 
-#: model.py:77
+#: model.py:78
 msgid "Line"
 msgstr "Линия"
 
-#: model.py:77
+#: model.py:78
 msgid "Polygon"
 msgstr "Полигон"
 
-#: model.py:78
+#: model.py:79
 msgid "Multipoint"
 msgstr "Мультиточка"
 
-#: model.py:78
+#: model.py:79
 msgid "Multiline"
 msgstr "Мультилиния"
 
-#: model.py:78
+#: model.py:79
 msgid "Multipolygon"
 msgstr "Мультиполигон"
 
-#: model.py:79
+#: model.py:80
 msgid "Point Z"
 msgstr "Точка Z"
 
-#: model.py:79
+#: model.py:80
 msgid "Line Z"
 msgstr "Линия Z"
 
-#: model.py:79
+#: model.py:80
 msgid "Polygon Z"
 msgstr "Полигон Z"
 
-#: model.py:80
+#: model.py:81
 msgid "Multipoint Z"
 msgstr "Мультиточка Z"
 
-#: model.py:80
+#: model.py:81
 msgid "Multiline Z"
 msgstr "Мультилиния Z"
 
-#: model.py:80
+#: model.py:81
 msgid "Multipolygon Z"
 msgstr "Мультиполигон Z"
 
-#: model.py:168
+#: model.py:169
 #, python-format
 msgid "Field name is forbidden: '%s'. Please remove or rename it."
 msgstr "Недопустимое имя поля: '%s'. Удалите или переименуйте его."
 
-#: model.py:183
+#: model.py:184
 #, python-format
 msgid "Unsupported field type: %r."
 msgstr "Тип поля %r не поддерживается."
 
-#: model.py:291 model.py:313
+#: model.py:292 model.py:314
 #, python-format
 msgid "Unknown geometry type: %d (%s)."
 msgstr "Неизвестный тип геометрии: %d (%s)."
 
-#: model.py:353
+#: model.py:354
 #, python-format
 msgid ""
 "It seems like declared and actual attributes encodings do not match. "
@@ -156,6 +156,14 @@ msgstr "Тип геометрии не поддерживается."
 #: model.py:797
 msgid "Geometry type for existing resource can't be changed."
 msgstr "Тип геометрии существующего ресурса не может быть изменен."
+
+#: amd/ngw-vector-layer/VersionedWidget.js:26
+msgid "Versioning"
+msgstr "Версионирование"
+
+#: amd/ngw-vector-layer/template/VersionedWidget.hbs:8
+msgid "Track changes"
+msgstr "Отслеживать изменения"
 
 #: amd/ngw-vector-layer/template/Widget.hbs:4
 msgid "Select a dataset"

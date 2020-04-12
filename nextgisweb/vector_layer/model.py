@@ -8,6 +8,7 @@ import tempfile
 import shutil
 import ctypes
 from datetime import datetime, time, date
+from functools import partial
 import six
 
 from zope.interface import implementer
@@ -384,6 +385,37 @@ class TableInfo(object):
             DBSession.add(obj)
 
 
+class TableInfoVersioned(TableInfo):
+    def setup_metadata(self, tablename):
+        metadata = db.MetaData(schema='vector_layer')
+        geom_fldtype = _GEOM_TYPE_2_DB[self.geometry_type]
+
+        class model(object):
+            def __init__(self, **kwargs):
+                for k, v in six.iteritems(kwargs):
+                    setattr(self, k, v)
+
+        table = db.Table(
+            tablename,
+            metadata,
+            db.Column('id', db.Integer, primary_key=True),
+            db.Column('fid', db.Integer, nullable=False),
+            db.Column('changed', db.DateTime, default=datetime.utcnow),
+            db.Column('deleted', db.Boolean, default=False),
+            db.Column('geom', ga.Geometry(
+                dimension=2, srid=self.srs_id,
+                geometry_type=geom_fldtype)),
+            *map(lambda fld: db.Column(fld.key, _FIELD_TYPE_2_DB[
+                fld.datatype]), self.fields)
+        )
+
+        db.mapper(model, table)
+
+        self.table = table
+        self.model = model
+        self.metadata = metadata
+
+
 class VectorLayerField(Base, LayerField):
     identity = 'vector_layer'
 
@@ -403,6 +435,7 @@ class VectorLayer(Base, Resource, SpatialLayerMixin, LayerFieldsMixin):
 
     tbl_uuid = db.Column(db.Unicode(32), nullable=False)
     geometry_type = db.Column(db.Enum(*GEOM_TYPE.enum), nullable=False)
+    versioned = db.Column(db.Boolean, default=False)
 
     __field_class__ = VectorLayerField
 
@@ -426,6 +459,10 @@ class VectorLayer(Base, Resource, SpatialLayerMixin, LayerFieldsMixin):
     @property
     def _tablename(self):
         return 'layer_%s' % self.tbl_uuid
+
+    @property
+    def _tablename_versioned(self):
+        return '%s_history' % self._tablename
 
     def setup_from_ogr(self, ogrlayer, strdecode):
         tableinfo = TableInfo.from_ogrlayer(ogrlayer, self.srs.id, strdecode)
@@ -465,6 +502,14 @@ class VectorLayer(Base, Resource, SpatialLayerMixin, LayerFieldsMixin):
             layer = self
 
         return BoundFeatureQuery
+
+    @property
+    def version_query(self):
+
+        class BoundVersionQuery(VersionQueryBase):
+            layer = self
+
+        return BoundVersionQuery
 
     def field_by_keyname(self, keyname):
         for f in self.fields:
@@ -513,7 +558,7 @@ class VectorLayer(Base, Resource, SpatialLayerMixin, LayerFieldsMixin):
 
         DBSession.merge(obj)
 
-        self.after_feature_update.fire(resource=self, feature=feature)
+        self.after_feature_update.fire(resource=self, feature=feature, obj=obj)
 
         on_data_change.fire(self, feature.geom)
         # TODO: Old geom version
@@ -549,7 +594,7 @@ class VectorLayer(Base, Resource, SpatialLayerMixin, LayerFieldsMixin):
         DBSession.flush()
         DBSession.refresh(obj)
 
-        self.after_feature_create.fire(resource=self, feature_id=obj.id)
+        self.after_feature_create.fire(resource=self, feature_id=obj.id, obj=obj)
 
         on_data_change.fire(self, feature.geom)
 
@@ -572,7 +617,7 @@ class VectorLayer(Base, Resource, SpatialLayerMixin, LayerFieldsMixin):
         obj = DBSession.query(tableinfo.model).filter_by(id=feature.id).one()
         DBSession.delete(obj)
 
-        self.after_feature_delete.fire(resource=self, feature_id=feature_id)
+        self.after_feature_delete.fire(resource=self, feature_id=feature_id, obj=obj)
 
         on_data_change.fire(self, feature.geom)
 
@@ -583,7 +628,9 @@ class VectorLayer(Base, Resource, SpatialLayerMixin, LayerFieldsMixin):
         tableinfo = TableInfo.from_layer(self)
         tableinfo.setup_metadata(self._tablename)
 
-        DBSession.query(tableinfo.model).delete()
+        query = self.feature_query()
+        for feature in query():
+            self.feature_delete(feature.id)
 
         self.after_all_feature_delete.fire(resource=self)
 
@@ -833,6 +880,16 @@ class _geometry_type_attr(SP):
             raise ResourceError(_("Geometry type for existing resource can't be changed."))
 
 
+class _versioned_attr(SP):
+
+    def setter(self, srlzr, value):
+        srlzr.obj.versioned = value
+        if value:
+            tableinfo = TableInfoVersioned.from_layer(srlzr.obj)
+            tableinfo.setup_metadata(tablename=srlzr.obj._tablename_versioned)
+            tableinfo.metadata.create_all(bind=DBSession.connection())
+
+
 P_DSS_READ = DataStructureScope.read
 P_DSS_WRITE = DataStructureScope.write
 P_DS_READ = DataScope.read
@@ -845,6 +902,7 @@ class VectorLayerSerializer(Serializer):
 
     srs = SR(read=P_DSS_READ, write=P_DSS_WRITE)
     geometry_type = _geometry_type_attr(read=P_DSS_READ, write=P_DSS_WRITE)
+    versioned = _versioned_attr(read=P_DSS_READ, write=P_DSS_WRITE)
 
     source = _source_attr(read=None, write=P_DS_WRITE)
     fields = _fields_attr(read=None, write=P_DS_WRITE)
@@ -857,6 +915,51 @@ def _clipbybox2d_exists():
         .execute("SELECT 1 FROM pg_proc WHERE proname='st_clipbybox2d'")
         .fetchone()
     )
+
+
+def _tokenize_filter(filters, tableinfo):
+    table = tableinfo.table
+
+    token = []
+    for k, o, v in filters:
+        supported_operators = (
+            "eq",
+            "ge",
+            "gt",
+            "ilike",
+            "in",
+            "le",
+            "like",
+            "lt",
+            "ne",
+            "notin",
+            "startswith",
+        )
+        if o not in supported_operators:
+            raise ValueError(
+                "Invalid operator '%s'. Only %r are supported."
+                % (o, supported_operators)
+            )
+
+        if v and o in ['in', 'notin']:
+            v = v.split(',')
+
+        if o in [
+            "ilike",
+            "in",
+            "like",
+            "notin",
+            "startswith",
+        ]:
+            o += "_op"
+
+        op = getattr(db.sql.operators, o)
+        if k == "id":
+            token.append(op(table.columns.id, v))
+        else:
+            token.append(op(table.columns[tableinfo[k].key], v))
+
+        return token
 
 
 @implementer(
@@ -1011,45 +1114,7 @@ class FeatureQueryBase(object):
                     where.append(table.columns[tableinfo[k].key] == v)
 
         if self._filter:
-            token = []
-            for k, o, v in self._filter:
-                supported_operators = (
-                    "eq",
-                    "ge",
-                    "gt",
-                    "ilike",
-                    "in",
-                    "le",
-                    "like",
-                    "lt",
-                    "ne",
-                    "notin",
-                    "startswith",
-                )
-                if o not in supported_operators:
-                    raise ValueError(
-                        "Invalid operator '%s'. Only %r are supported."
-                        % (o, supported_operators)
-                    )
-
-                if v and o in ['in', 'notin']:
-                    v = v.split(',')
-
-                if o in [
-                    "ilike",
-                    "in",
-                    "like",
-                    "notin",
-                    "startswith",
-                ]:
-                    o += "_op"
-
-                op = getattr(db.sql.operators, o)
-                if k == "id":
-                    token.append(op(table.columns.id, v))
-                else:
-                    token.append(op(table.columns[tableinfo[k].key], v))
-
+            token = _tokenize_filter(self._filter, tableinfo)
             where.append(db.and_(*token))
 
         if self._filter_sql:
@@ -1146,3 +1211,163 @@ class FeatureQueryBase(object):
                     return row[0]
 
         return QueryFeatureSet()
+
+
+class VersionQueryBase(object):
+    def __init__(self):
+        self._srs = None
+        self._geom = None
+        self._limit = None
+        self._offset = None
+        self._latest = None
+        self._date_from = None
+        self._date_to = None
+        self._intersects = None
+        self._filter = None
+
+    def srs(self, srs):
+        self._srs = srs
+
+    def geom(self):
+        self._geom = True
+
+    def limit(self, limit, offset=0):
+        self._limit = limit
+        self._offset = offset
+
+    def filter(self, *args):
+        self._filter = args
+
+    def latest(self):
+        self._latest = True
+
+    def date_range(self, date_from=None, date_to=None):
+        self._date_from = date_from
+        self._date_to = date_to
+
+    def intersects(self, geom):
+        self._intersects = geom
+
+    def __call__(self):
+        tableinfo = TableInfoVersioned.from_layer(self.layer)
+        tableinfo.setup_metadata(tablename=self.layer._tablename_versioned)
+        table = tableinfo.table
+
+        where = []
+        order_criterion = []
+
+        columns = [
+            table.columns.id,
+            table.columns.fid,
+            table.columns.deleted,
+            table.columns.changed
+        ]
+
+        srsid = self.layer.srs_id if self._srs is None else self._srs.id
+
+        geomcol = table.columns.geom
+        geomexpr = db.func.st_transform(geomcol, srsid)
+
+        if self._geom:
+            columns.append(db.func.st_asewkb(geomexpr).label('geom'))
+
+        if self._date_from:
+            where.append(table.columns.changed >= self._date_from)
+
+        if self._date_to:
+            where.append(table.columns.changed <= self._date_to)
+
+        selected_fields = []
+        for f in tableinfo.fields:
+            columns.append(table.columns[f.key].label(f.keyname))
+            selected_fields.append(f)
+
+        # TODO: move to separate function
+        if self._intersects:
+            intgeom = db.func.st_setsrid(db.func.st_geomfromtext(
+                self._intersects.wkt), self._intersects.srid)
+            where.append(db.func.st_intersects(
+                geomcol, db.func.st_transform(
+                    intgeom, self.layer.srs_id)))
+
+        if self._filter:
+            token = _tokenize_filter(self._filter, tableinfo)
+            where.append(db.and_(*token))
+
+        order_criterion.append(table.columns.id)
+
+        class VersionQuery(object):
+            layer = self.layer
+
+            _geom = self._geom
+            _limit = self._limit
+            _offset = self._offset
+            _latest = self._latest
+
+            def __iter__(self):
+                query = sql.select(columns)
+
+                if self._latest:
+                    sub_query = sql.select(
+                        [table.columns.fid, db.func.max(table.columns.changed).label("maxdate")]
+                    ).group_by(table.columns.fid).alias("grouped")
+
+                    join = sql.join(
+                        table,
+                        sub_query,
+                        db.and_(
+                            table.columns.fid == sub_query.c.fid,
+                            table.columns.changed == sub_query.c.maxdate,
+                        ),
+                    )
+
+                    query = query.select_from(join)
+
+                query = (
+                    query.limit(self._limit)
+                    .offset(self._offset)
+                    .order_by(*order_criterion)
+                    .where(db.and_(*where))
+                )
+
+                rows = DBSession.connection().execute(query)
+                for row in rows:
+                    fdict = dict((f.keyname, row[f.keyname])
+                                 for f in selected_fields)
+                    if self._geom:
+                        geom = geom_from_wkb(
+                            row['geom'].tobytes() if six.PY3
+                            else six.binary_type(row['geom']))
+                    else:
+                        geom = None
+
+                    feature = Feature(
+                        layer=self.layer, id=row.fid, fields=fdict, geom=geom,
+                    )
+
+                    yield (
+                        feature,
+                        dict(id=row.id, changed=row.changed, deleted=row.deleted)
+                    )
+
+        return VersionQuery()
+
+
+def create_version(resource, **kwargs):
+    obj = kwargs["obj"]
+    deleted = kwargs.get("deleted", False)
+
+    if resource.versioned:
+        tableinfo = TableInfoVersioned.from_layer(resource)
+        tableinfo.setup_metadata(tablename=resource._tablename_versioned)
+
+        hist = tableinfo.model(fid=obj.id, geom=obj.geom, deleted=deleted)
+        for f in tableinfo.fields:
+            setattr(hist, f.key, getattr(obj, f.key))
+
+        DBSession.add(hist)
+
+
+VectorLayer.after_feature_create += create_version
+VectorLayer.after_feature_update += create_version
+VectorLayer.after_feature_delete += partial(create_version, deleted=True)

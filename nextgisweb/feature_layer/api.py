@@ -63,6 +63,20 @@ def _ogr_layer_from_features(layer, features, name=b'', ds=None, fid=None):
     return ogr_layer
 
 
+def _build_filter(resource, request):
+    filter_ = []
+    keys = [fld.keyname for fld in resource.fields]
+    for key in filter(lambda k: k.startswith('fld_'), request.GET.keys()):
+        try:
+            fld_key, operator = key.rsplit('__', 1)
+        except ValueError:
+            fld_key, operator = (key, 'eq')
+
+        if fld_key in ['fld_%s' % k for k in keys]:
+            filter_.append((re.sub('^fld_', '', fld_key), operator, request.GET[key]))
+    return filter_
+
+
 def view_geojson(request):
     request.GET["format"] = EXPORT_FORMAT_OGR["GEOJSON"].extension
     request.GET["zipped"] = "false"
@@ -303,7 +317,7 @@ def deserialize(feat, data):
                 ext.deserialize(feat, data['extensions'][cls.identity])
 
 
-def serialize(feat, keys=None, geom_format=None):
+def serialize(feat, keys=None, geom_format=None, extensions=True):
     result = OrderedDict(id=feat.id)
 
     if geom_format is not None and geom_format.lower() == "geojson":
@@ -349,10 +363,11 @@ def serialize(feat, keys=None, geom_format=None):
 
         result['fields'][fld.keyname] = fval
 
-    result['extensions'] = OrderedDict()
-    for cls in FeatureExtension.registry:
-        ext = cls(feat.layer)
-        result['extensions'][cls.identity] = ext.serialize(feat)
+    if extensions:
+        result['extensions'] = OrderedDict()
+        for cls in FeatureExtension.registry:
+            ext = cls(feat.layer)
+            result['extensions'][cls.identity] = ext.serialize(feat)
 
     return result
 
@@ -453,17 +468,7 @@ def cget(resource, request):
         query.limit(int(limit), int(offset))
 
     # Filtering by attributes
-    filter_ = []
-    keys = [fld.keyname for fld in resource.fields]
-    for key in filter(lambda k: k.startswith('fld_'), request.GET.keys()):
-        try:
-            fld_key, operator = key.rsplit('__', 1)
-        except ValueError:
-            fld_key, operator = (key, 'eq')
-
-        if fld_key in ['fld_%s' % k for k in keys]:
-            filter_.append((re.sub('^fld_', '', fld_key), operator, request.GET[key]))
-
+    filter_ = _build_filter(resource, request)
     if filter_:
         query.filter(*filter_)
 
@@ -634,7 +639,54 @@ def store_collection(layer, request):
     return Response(json.dumps(result, cls=geojson.Encoder), headers=headers)
 
 
+def versions(resource, request):
+    request.resource_permission(PERM_READ)
+
+    if not resource.versioned:
+        raise ValidationError(_("Changes tracking is not enabled on this layer."))
+
+    date_from = request.params.get("date_from")
+    date_to = request.params.get("date_to")
+    limit = request.GET.get("limit")
+    offset = request.GET.get("offset")
+    wkt = request.GET.get('intersects')
+    latest = request.params.get("latest", "false")
+    latest = latest.lower() == "true"
+
+    query = resource.version_query()
+    query.limit(limit, offset)
+    query.date_range(date_from, date_to)
+    query.geom()
+
+    if latest:
+        query.latest()
+
+    if wkt is not None:
+        geom = geom_from_wkt(wkt, srid=resource.srs.id)
+        query.intersects(geom)
+
+    filter_ = _build_filter(resource, request)
+    if filter_:
+        query.filter(*filter_)
+
+    result = [
+        dict(
+            feature=serialize(feature, extensions=False, geom_format="geojson"),
+            version=version,
+        )
+        for feature, version in query()
+    ]
+
+    return Response(
+        json.dumps(result, cls=geojson.Encoder),
+        content_type="application/json",
+        charset="utf-8",
+    )
+
+
 def setup_pyramid(comp, config):
+    from ..vector_layer import VectorLayer
+
     config.add_route(
         'feature_layer.geojson', '/api/resource/{id}/geojson',
         factory=resource_factory) \
@@ -679,6 +731,11 @@ def setup_pyramid(comp, config):
         'feature_layer.store', r'/api/resource/{id:\d+}/store/',
         factory=resource_factory) \
         .add_view(store_collection, context=IFeatureLayer, request_method='GET')
+
+    config.add_route(
+        'feature_layer.versions', '/api/resource/{id}/versions/',
+        factory=resource_factory) \
+        .add_view(versions, context=VectorLayer, request_method='GET')
 
     from .identify import identify
     config.add_route(
