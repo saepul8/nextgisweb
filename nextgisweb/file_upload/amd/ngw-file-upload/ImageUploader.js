@@ -1,6 +1,6 @@
 define([
     "dojo/_base/declare",
-    "dojo/dom-class",
+    'dojo/dom-class',
     "ngw-pyramid/i18n!file_upload",
     "ngw-pyramid/hbs-i18n",
     'ngw-pyramid/NGWButton/NGWButton',
@@ -25,9 +25,9 @@ define([
      */
     return declare([Uploader], {
         _deleteImage: false,
+        current_image: '',
         templateString: hbsI18n(template, i18n),
         backgroundSize: 'contain', // 'auto', 'cover',
-        image: null,
 
         postCreate: function () {
           this.inherited(arguments);
@@ -39,13 +39,16 @@ define([
 
             this.setAccept('image/png');
 
+            if (this.current_image !== '') {
+                this._setBackgroundImage();
+            } else {
+                this.current_image = null;
+            }
+
             this.btnDeleteImage.on('click', function () {
                 this._deleteImage = true;
-                this.setImageUrl(null);
                 this.uploadReset();
             }.bind(this));
-
-            var that = this;
 
             this.dropTarget.addEventListener('drop', function(e){
               var dt = e.dataTransfer
@@ -67,36 +70,42 @@ define([
         readImage(file) {
           var reader = new FileReader();
           reader.onloadend = function () {
-              this.image = reader.result;
+            this.current_image = reader.result;
           }.bind(this);
           reader.readAsDataURL(file);
         },
 
-        setImageUrl: function (url) {
-            if (url === null) {
-                //delete this.dropTarget.style.background;
+        _setBackgroundImage: function () {
+            if (this.current_image === null) {
                 this.dropTarget.style.removeProperty('background-image');
+                domClass.remove(this.domNode, 'has_image');
             } else {
-                this.dropTarget.style.backgroundImage = 'url(' + url + ')';
-                //this.dropTarget.style.background = 'url(' + url + ') no-repeat';
+                this.dropTarget.style.backgroundImage = 'url(' + this.current_image + ')';
+                domClass.add(this.domNode, 'has_image');
             }
         },
 
         uploadBegin: function () {
             this.inherited(arguments);
 
-            this.setImageUrl(null);
+            this.uploadReset();
             this._deleteImage = false;
 
             var files = this.uploaderWidget.inputNode.files;
             if (files.length) {
-              this.readImage(files[0])
+              this.readImage(files[0]);
             }
         },
 
         uploadComplete: function() {
-          this.inherited(arguments),
-          this.setImageUrl(this.image);
+          this.inherited(arguments);
+          this._setBackgroundImage(this.current_image);
+        },
+
+        uploadReset: function() {
+          this.inherited(arguments);
+          this.current_image = null;
+          this._setBackgroundImage();
         }
     });
 });
