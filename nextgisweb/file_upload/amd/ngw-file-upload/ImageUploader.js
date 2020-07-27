@@ -25,13 +25,16 @@ define([
      */
     return declare([Uploader], {
         _deleteImage: false,
-        current_image: '',
+        current_image: null,
         templateString: hbsI18n(template, i18n),
         backgroundSize: 'contain', // 'auto', 'cover',
 
         postCreate: function () {
           this.inherited(arguments);
           domClass.add(this.focusNode, `uploader--${this.backgroundSize}`);
+          if (this.current_image) {
+            domClass.add(this.focusNode, `uploader--complete`);
+          }
         },
 
         startup: function () {
