@@ -30,11 +30,8 @@ define([
         backgroundSize: 'contain', // 'auto', 'cover',
 
         postCreate: function () {
-          this.inherited(arguments);
-          domClass.add(this.focusNode, `uploader--${this.backgroundSize}`);
-          if (this.current_image) {
-            domClass.add(this.focusNode, `uploader--complete`);
-          }
+            this.inherited(arguments);
+            domClass.add(this.focusNode, `uploader--${this.backgroundSize}`);
         },
 
         startup: function () {
@@ -42,22 +39,16 @@ define([
 
             this.setAccept('image/png');
 
-            if (this.current_image !== '') {
-                this._setBackgroundImage();
-            } else {
-                this.current_image = null;
-            }
-
             this.btnDeleteImage.on('click', function () {
                 this._deleteImage = true;
                 this.uploadReset();
             }.bind(this));
 
             this.dropTarget.addEventListener('drop', function(e){
-              var dt = e.dataTransfer
+              var dt = e.dataTransfer;
               var files = dt.files;
-              if (files.length) {
-                this.readImage(files[0]);
+              if (files.length === 1) {
+                  this.readImage(files[0]);
               }
             }.bind(this));
         },
@@ -71,20 +62,26 @@ define([
         },
 
         readImage(file) {
-          var reader = new FileReader();
-          reader.onloadend = function () {
-            this.current_image = reader.result;
-          }.bind(this);
-          reader.readAsDataURL(file);
+            var reader = new FileReader();
+            reader.onloadend = function () {
+                this.current_image = reader.result;
+            }.bind(this);
+            reader.readAsDataURL(file);
+        },
+
+        setImage: function (url) {
+            this.current_image = url;
+            if (this.current_image) {
+                domClass.add(this.focusNode, 'uploader--complete');
+            }
+            this._setBackgroundImage();
         },
 
         _setBackgroundImage: function () {
-            if (this.current_image === null) {
-                this.dropTarget.style.removeProperty('background-image');
-                domClass.remove(this.domNode, 'has_image');
-            } else {
+            if (this.current_image) {
                 this.dropTarget.style.backgroundImage = 'url(' + this.current_image + ')';
-                domClass.add(this.domNode, 'has_image');
+            } else {
+                this.dropTarget.style.removeProperty('background-image');                
             }
         },
 
@@ -96,19 +93,19 @@ define([
 
             var files = this.uploaderWidget.inputNode.files;
             if (files.length) {
-              this.readImage(files[0]);
+                this.readImage(files[0]);
             }
         },
 
         uploadComplete: function() {
-          this.inherited(arguments);
-          this._setBackgroundImage(this.current_image);
+            this.inherited(arguments);
+            this._setBackgroundImage(this.current_image);
         },
 
         uploadReset: function() {
-          this.inherited(arguments);
-          this.current_image = null;
-          this._setBackgroundImage();
+            this.inherited(arguments);
+            this.current_image = null;
+            this._setBackgroundImage();
         }
     });
 });
